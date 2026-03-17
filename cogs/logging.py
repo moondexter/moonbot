@@ -4,6 +4,7 @@ from discord.ext import commands
 from dotenv import load_dotenv
 import os
 import asyncio
+import time
 
 load_dotenv()
 GUILD_ID = int(os.getenv("GUILD_ID"))
@@ -15,6 +16,14 @@ UPDATES_CHANNEL_ID = 1348025689626120232
 class Logging(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self._recent_logs = {}
+
+    def _is_duplicate(self, key: str, window: float = 3.0) -> bool:
+        now = time.monotonic()
+        if key in self._recent_logs and now - self._recent_logs[key] < window:
+            return True
+        self._recent_logs[key] = now
+        return False
 
     async def log(self, guild, embed):
         channel = guild.get_channel(LOG_CHANNEL_ID)
@@ -30,16 +39,31 @@ class Logging(commands.Cog):
     async def on_message_delete(self, message: discord.Message):
         if message.author.bot or not message.guild:
             return
+        if self._is_duplicate(f"msg_delete:{message.id}"):
+            return
         embed = discord.Embed(title="🗑️ Message Deleted", color=discord.Color.red())
         embed.add_field(name="Author", value=message.author.mention)
         embed.add_field(name="Channel", value=message.channel.mention)
-        embed.add_field(name="Content", value=message.content or "[no text]", inline=False)
+        if message.content:
+            embed.add_field(name="Content", value=message.content, inline=False)
+        if message.attachments:
+            attachment_list = "\n".join(f"[{a.filename}]({a.url})" for a in message.attachments)
+            embed.add_field(name="Attachments", value=attachment_list, inline=False)
+            image_exts = (".png", ".jpg", ".jpeg", ".gif", ".webp")
+            for a in message.attachments:
+                if a.filename.lower().endswith(image_exts):
+                    embed.set_image(url=a.url)
+                    break
+        if not message.content and not message.attachments:
+            embed.add_field(name="Content", value="[no text or attachments]", inline=False)
         embed.set_footer(text=f"User ID: {message.author.id}")
         await self.log(message.guild, embed)
 
     @commands.Cog.listener()
     async def on_message_edit(self, before: discord.Message, after: discord.Message):
         if before.author.bot or before.content == after.content or not before.guild:
+            return
+        if self._is_duplicate(f"msg_edit:{before.id}:{before.content}"):
             return
         embed = discord.Embed(title="✏️ Message Edited", color=discord.Color.orange())
         embed.add_field(name="Author", value=before.author.mention)
@@ -53,6 +77,8 @@ class Logging(commands.Cog):
     async def on_member_join(self, member: discord.Member):
         if member.bot:
             return
+        if self._is_duplicate(f"join:{member.id}"):
+            return
         embed = discord.Embed(title="📥 Member Joined", color=discord.Color.green())
         embed.add_field(name="User", value=f"{member.mention} ({member.name})")
         embed.add_field(name="Account Created", value=discord.utils.format_dt(member.created_at, style="R"))
@@ -64,11 +90,11 @@ class Logging(commands.Cog):
     async def on_member_remove(self, member: discord.Member):
         if member.bot:
             return
+        if self._is_duplicate(f"leave:{member.id}"):
+            return
 
-        # Wait briefly for audit log to populate
         await asyncio.sleep(1)
 
-        # Check if this was a kick
         kicked_by = None
         try:
             async for entry in member.guild.audit_logs(limit=5, action=discord.AuditLogAction.kick):
@@ -81,7 +107,6 @@ class Logging(commands.Cog):
         roles = [r.mention for r in member.roles if r.name != "@everyone"]
 
         if kicked_by:
-            # It was a kick
             log_embed = discord.Embed(title="👢 Member Kicked", color=discord.Color.orange())
             log_embed.add_field(name="User", value=f"{member.mention} ({member.name})")
             log_embed.add_field(name="Kicked By", value=kicked_by.mention)
@@ -94,7 +119,6 @@ class Logging(commands.Cog):
                 color=discord.Color.orange()
             ))
         else:
-            # They left on their own
             log_embed = discord.Embed(title="📤 Member Left", color=discord.Color.red())
             log_embed.add_field(name="User", value=f"{member.mention} ({member.name})")
             log_embed.add_field(name="Roles", value=", ".join(roles) if roles else "None", inline=False)
@@ -108,6 +132,8 @@ class Logging(commands.Cog):
 
     @commands.Cog.listener()
     async def on_member_ban(self, guild: discord.Guild, user: discord.User):
+        if self._is_duplicate(f"ban:{user.id}"):
+            return
         embed = discord.Embed(title="🔨 Member Banned", color=discord.Color.dark_red())
         embed.add_field(name="User", value=f"{user.mention} ({user.name})")
         embed.set_footer(text=f"User ID: {user.id}")
@@ -120,6 +146,8 @@ class Logging(commands.Cog):
 
     @commands.Cog.listener()
     async def on_member_unban(self, guild: discord.Guild, user: discord.User):
+        if self._is_duplicate(f"unban:{user.id}"):
+            return
         embed = discord.Embed(title="✅ Member Unbanned", color=discord.Color.green())
         embed.add_field(name="User", value=f"{user.mention} ({user.name})")
         embed.set_footer(text=f"User ID: {user.id}")
@@ -127,33 +155,38 @@ class Logging(commands.Cog):
 
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member):
-        # Role changes
         added = [r for r in after.roles if r not in before.roles]
         removed = [r for r in before.roles if r not in after.roles]
         if added or removed:
-            embed = discord.Embed(title="🔄 Roles Updated", color=discord.Color.blurple())
-            embed.add_field(name="Member", value=after.mention)
-            if added:
-                embed.add_field(name="Roles Added", value=", ".join(r.mention for r in added), inline=False)
-            if removed:
-                embed.add_field(name="Roles Removed", value=", ".join(r.mention for r in removed), inline=False)
-            embed.set_footer(text=f"User ID: {after.id}")
-            await self.log(after.guild, embed)
+            key = f"roles:{after.id}:{','.join(str(r.id) for r in added)}:{','.join(str(r.id) for r in removed)}"
+            if not self._is_duplicate(key):
+                embed = discord.Embed(title="🔄 Roles Updated", color=discord.Color.blurple())
+                embed.add_field(name="Member", value=after.mention)
+                if added:
+                    embed.add_field(name="Roles Added", value=", ".join(r.mention for r in added), inline=False)
+                if removed:
+                    embed.add_field(name="Roles Removed", value=", ".join(r.mention for r in removed), inline=False)
+                embed.set_footer(text=f"User ID: {after.id}")
+                await self.log(after.guild, embed)
 
-        # Nickname changes
         if before.nick != after.nick:
-            embed = discord.Embed(title="📝 Nickname Changed", color=discord.Color.blurple())
-            embed.add_field(name="Member", value=after.mention)
-            embed.add_field(name="Before", value=before.nick or before.name)
-            embed.add_field(name="After", value=after.nick or after.name)
-            embed.set_footer(text=f"User ID: {after.id}")
-            await self.log(after.guild, embed)
+            if not self._is_duplicate(f"nick:{after.id}:{after.nick}"):
+                embed = discord.Embed(title="📝 Nickname Changed", color=discord.Color.blurple())
+                embed.add_field(name="Member", value=after.mention)
+                embed.add_field(name="Before", value=before.nick or before.name)
+                embed.add_field(name="After", value=after.nick or after.name)
+                embed.set_footer(text=f"User ID: {after.id}")
+                await self.log(after.guild, embed)
 
     @commands.Cog.listener()
     async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
         if member.bot:
             return
         if before.channel == after.channel:
+            return
+        before_id = before.channel.id if before.channel else None
+        after_id = after.channel.id if after.channel else None
+        if self._is_duplicate(f"voice:{member.id}:{before_id}:{after_id}"):
             return
         if after.channel and not before.channel:
             embed = discord.Embed(title="🔊 Joined Voice", color=discord.Color.green())
