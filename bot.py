@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 import os
+from keep_alive import keep_alive
 
 load_dotenv()
 
@@ -26,4 +27,5 @@ async def main():
         await bot.start(TOKEN)
 
 import asyncio
+keep_alive()
 asyncio.run(main())
