@@ -141,7 +141,12 @@ class Leveling(commands.Cog):
     async def on_message(self, message: discord.Message):
         if message.author.bot or not message.guild:
             return
+        try:
+            await self._handle_message(message)
+        except Exception as e:
+            log.error(f"Error in on_message for {message.author}: {e}", exc_info=e)
 
+    async def _handle_message(self, message: discord.Message):
         data = load_data()
         user_id = str(message.author.id)
 

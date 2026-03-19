@@ -209,6 +209,12 @@ class Moderation(commands.Cog):
         await interaction.response.send_message(f"{member.mention} has **{count}** warn(s).", ephemeral=True)
 
     async def _auto_release(self, guild: discord.Guild, member: discord.Member, delay_seconds: float = 0):
+        try:
+            await self._do_auto_release(guild, member, delay_seconds)
+        except Exception as e:
+            log.error(f"Error in auto release for {member}: {e}", exc_info=e)
+
+    async def _do_auto_release(self, guild: discord.Guild, member: discord.Member, delay_seconds: float = 0):
         await asyncio.sleep(delay_seconds)
         prisoner_role = guild.get_role(PRISONER_ROLE_ID)
 
