@@ -6,6 +6,9 @@ import os
 import json
 import asyncio
 import time
+import logging
+
+log = logging.getLogger("cogs.moderation")
 
 load_dotenv()
 GUILD_ID = int(os.getenv("GUILD_ID"))
@@ -65,15 +68,18 @@ class Moderation(commands.Cog):
 
     async def _resume_pending_releases(self):
         await self.bot.wait_until_ready()
-        arrests = load_arrests()
-        for user_id, data in list(arrests.items()):
-            if isinstance(data, dict) and data.get("release_at"):
-                delay = data["release_at"] - time.time()
-                guild = self.bot.get_guild(GUILD_ID)
-                if guild:
-                    member = guild.get_member(int(user_id))
-                    if member:
-                        asyncio.create_task(self._auto_release(guild, member, delay_seconds=max(delay, 0)))
+        try:
+            arrests = load_arrests()
+            for user_id, data in list(arrests.items()):
+                if isinstance(data, dict) and data.get("release_at"):
+                    delay = data["release_at"] - time.time()
+                    guild = self.bot.get_guild(GUILD_ID)
+                    if guild:
+                        member = guild.get_member(int(user_id))
+                        if member:
+                            asyncio.create_task(self._auto_release(guild, member, delay_seconds=max(delay, 0)))
+        except Exception as e:
+            log.error(f"Error resuming pending releases: {e}", exc_info=e)
 
     async def post_update(self, guild, embed):
         channel = guild.get_channel(UPDATES_CHANNEL_ID)

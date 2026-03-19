@@ -7,6 +7,9 @@ import json
 import random
 import asyncio
 import time
+import logging
+
+log = logging.getLogger("cogs.leveling")
 
 load_dotenv()
 GUILD_ID = int(os.getenv("GUILD_ID"))
@@ -65,7 +68,10 @@ class Leveling(commands.Cog):
     async def _inactivity_loop(self):
         await self.bot.wait_until_ready()
         while not self.bot.is_closed():
-            await self._check_inactivity()
+            try:
+                await self._check_inactivity()
+            except Exception as e:
+                log.error(f"Error in inactivity check: {e}", exc_info=e)
             await asyncio.sleep(86400)  # run every 24 hours
 
     async def _check_inactivity(self):
