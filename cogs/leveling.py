@@ -327,10 +327,11 @@ class Leveling(commands.Cog):
             await interaction.response.send_message(f"{member.mention} is already at max rank.", ephemeral=True)
             return
         new_level = current_level + 1
-        old_role = interaction.guild.get_role(LEVEL_ROLES[current_level])
         new_role = interaction.guild.get_role(LEVEL_ROLES[new_level])
-        if old_role:
-            await member.remove_roles(old_role)
+        old_roles = [interaction.guild.get_role(rid) for rid in LEVEL_ROLES.values()]
+        old_roles = [r for r in old_roles if r and r in member.roles]
+        if old_roles:
+            await member.remove_roles(*old_roles)
         if new_role:
             await member.add_roles(new_role)
         # Update XP data
@@ -359,10 +360,11 @@ class Leveling(commands.Cog):
             await interaction.response.send_message(f"{member.mention} is already at the lowest rank.", ephemeral=True)
             return
         new_level = current_level - 1
-        old_role = interaction.guild.get_role(LEVEL_ROLES[current_level])
         new_role = interaction.guild.get_role(LEVEL_ROLES[new_level])
-        if old_role:
-            await member.remove_roles(old_role)
+        old_roles = [interaction.guild.get_role(rid) for rid in LEVEL_ROLES.values()]
+        old_roles = [r for r in old_roles if r and r in member.roles]
+        if old_roles:
+            await member.remove_roles(*old_roles)
         if new_role:
             await member.add_roles(new_role)
         # Update XP data
@@ -377,6 +379,18 @@ class Leveling(commands.Cog):
 
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member):
+        # Enforce single rank role — strip extras if someone gains a second one
+        rank_role_ids = set(LEVEL_ROLES.values())
+        before_rank_ids = {r.id for r in before.roles if r.id in rank_role_ids}
+        after_rank_ids = {r.id for r in after.roles if r.id in rank_role_ids}
+        newly_added = after_rank_ids - before_rank_ids
+        if newly_added and len(after_rank_ids) > 1:
+            # Keep only the newly added role, remove all others
+            new_rank_id = newly_added.pop()
+            to_remove = [r for r in after.roles if r.id in rank_role_ids and r.id != new_rank_id]
+            if to_remove:
+                await after.remove_roles(*to_remove)
+
         # Boost reward — 500 XP when someone starts boosting
         if not before.premium_since and after.premium_since:
             data = load_data()
